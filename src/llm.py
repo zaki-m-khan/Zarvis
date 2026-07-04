@@ -1,4 +1,5 @@
-"""Single LLM call, provider by env var: OPENAI_API_KEY -> gpt-5.4-mini, else ANTHROPIC_API_KEY -> claude-haiku-4-5."""
+"""LLM calls, provider by env var: OPENAI_API_KEY -> gpt-5.4-mini, else ANTHROPIC_API_KEY -> claude-haiku-4-5."""
+import json
 import os
 
 OPENAI_MODEL = "gpt-5.4-mini"
@@ -41,3 +42,44 @@ def compose(system_blocks: list[dict], user_text: str) -> tuple[str, str]:
         f"{ANTHROPIC_MODEL} in={u.input_tokens} out={u.output_tokens} "
         f"cache_read={u.cache_read_input_tokens} cache_write={u.cache_creation_input_tokens}",
     )
+
+
+PARSE_PROMPT = (
+    "Extract today's accountability data from Zaki's Telegram replies below. "
+    "Return ONLY a JSON object with these keys (null when not mentioned): "
+    "gym (bool, lift done), outreach (int, outreaches sent), calls (int, calls/chats booked), "
+    "clay (bool, Clay table shipped), steps (int), weight (float, lbs), milestone (bool, project milestone hit).\n\n"
+    "Replies:\n{replies}"
+)
+
+
+def parse_checkin(replies: list[str]):
+    """Parse free-text replies into a CheckIn. Returns None when nothing parseable."""
+    from src.models import CheckIn
+
+    text = PARSE_PROMPT.format(replies="\n".join(f"- {r}" for r in replies))
+    if os.environ.get("OPENAI_API_KEY"):
+        from openai import OpenAI
+
+        resp = OpenAI().chat.completions.create(
+            model=OPENAI_MODEL,
+            max_completion_tokens=500,
+            response_format={"type": "json_object"},
+            messages=[{"role": "user", "content": text}],
+        )
+        raw = resp.choices[0].message.content
+    else:
+        import anthropic
+
+        resp = anthropic.Anthropic().messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=500,
+            messages=[{"role": "user", "content": text}],
+        )
+        raw = "".join(b.text for b in resp.content if b.type == "text")
+        raw = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
+    try:
+        checkin = CheckIn.model_validate(json.loads(raw))
+        return checkin if checkin.has_data() else None
+    except Exception:
+        return None

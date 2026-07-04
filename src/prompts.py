@@ -31,16 +31,19 @@ def _format_recent(recent: list[tuple[str, str, str, str]]) -> str:
     return "Last 7 days of check-ins:\n" + "\n".join(lines[-30:])
 
 
-def morning_prompt(today_str: str, blocks: list[tuple[str, str]], source: str, recent: list) -> str:
+def morning_prompt(today_str: str, blocks: list[tuple[str, str]], source: str, recent: list, board: str = "") -> str:
     return (
         f"It is {today_str}, 7:00 AM. Compose this morning's nudge (max 6 lines).\n\n"
         f"{_format_blocks(blocks, source)}\n\n"
+        f"{board}\n\n"
         f"{_format_recent(recent)}\n\n"
         "Write ONLY the Telegram message text, nothing else."
     )
 
 
-def evening_prompt(today_str: str, blocks: list[tuple[str, str]], source: str, replies: list[str], recent: list) -> str:
+def evening_prompt(
+    today_str: str, blocks: list[tuple[str, str]], source: str, replies: list[str], recent: list, board: str = ""
+) -> str:
     replies_str = (
         "Zaki's replies since the last run:\n" + "\n".join(f"- {r}" for r in replies)
         if replies
@@ -50,7 +53,9 @@ def evening_prompt(today_str: str, blocks: list[tuple[str, str]], source: str, r
         f"It is {today_str}, 9:00 PM. Compose tonight's check-in message.\n\n"
         f"{_format_blocks(blocks, source)}\n\n"
         f"{replies_str}\n\n"
+        f"{board}\n\n"
         f"{_format_recent(recent)}\n\n"
-        "Ask about today's blocks and the scoreboard metrics that moved today. "
+        "Ask about today's blocks and anything the scoreboard is missing (numbers like outreach count, "
+        "steps, weight come from his typed replies; the buttons under your message log gym/steps/Clay/milestone). "
         "Write ONLY the Telegram message text, nothing else."
     )

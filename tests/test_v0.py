@@ -3,7 +3,7 @@ from zoneinfo import ZoneInfo
 
 from src import db, memory
 from src.tools import calendar
-from src.tools.telegram import _extract_messages
+from src.tools.telegram import _extract_updates
 
 
 def test_schema_and_checkin_roundtrip():
@@ -22,7 +22,9 @@ def test_allowlist_rejects_other_senders():
         {"update_id": 2, "message": {"chat": {"id": 999}, "text": "from stranger"}},
         {"update_id": 3, "message": {"chat": {"id": 111}}},  # no text (sticker etc.)
     ]
-    assert _extract_messages(updates, 111) == ["from zaki"]
+    texts, taps = _extract_updates(updates, 111)
+    assert texts == ["from zaki"]
+    assert taps == []
 
 
 def test_calendar_fallback_template(monkeypatch):
