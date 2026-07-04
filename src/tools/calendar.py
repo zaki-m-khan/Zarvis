@@ -49,18 +49,22 @@ def _google_events(now: datetime) -> list[tuple[str, str]]:
     service = build("calendar", "v3", credentials=creds)
     start = datetime.combine(now.date(), time.min, tzinfo=ET)
     end = start + timedelta(days=1)
-    events = (
-        service.events()
-        .list(
-            calendarId="primary",
-            timeMin=start.isoformat(),
-            timeMax=end.isoformat(),
-            singleEvents=True,
-            orderBy="startTime",
+    calendar_ids = os.environ.get("GOOGLE_CALENDAR_IDS", "primary").split(",")
+    events = []
+    for cal_id in calendar_ids:
+        events += (
+            service.events()
+            .list(
+                calendarId=cal_id.strip(),
+                timeMin=start.isoformat(),
+                timeMax=end.isoformat(),
+                singleEvents=True,
+                orderBy="startTime",
+            )
+            .execute()
+            .get("items", [])
         )
-        .execute()
-        .get("items", [])
-    )
+    events.sort(key=lambda e: e["start"].get("dateTime", ""))
     blocks = []
     for e in events:
         start_raw = e["start"].get("dateTime")

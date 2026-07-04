@@ -58,4 +58,5 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           DATABASE_PATH: ./jarvis.db
+          GOOGLE_CALENDAR_IDS: primary,zmk227@lehigh.edu
         run: python -m src.runs.${{ steps.decide.outputs.run_type }}
