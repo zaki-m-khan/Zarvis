@@ -2,14 +2,11 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-import anthropic
 from dotenv import load_dotenv
 
-from src import db, memory, prompts
+from src import db, llm, memory, prompts
 from src.runs.guard import run_guarded
 from src.tools import calendar, telegram
-
-MODEL = "claude-haiku-4-5"
 
 
 def main() -> None:
@@ -19,22 +16,14 @@ def main() -> None:
     recent = memory.recent_checkins(conn, days=7)
     today_str = datetime.now(ZoneInfo("America/New_York")).strftime("%A, %B %d, %Y")
 
-    client = anthropic.Anthropic()
-    resp = client.messages.create(
-        model=MODEL,
-        max_tokens=1000,
-        system=prompts.system_blocks(mem),
-        messages=[{"role": "user", "content": prompts.morning_prompt(today_str, blocks, source, recent)}],
+    text, usage = llm.compose(
+        prompts.system_blocks(mem),
+        prompts.morning_prompt(today_str, blocks, source, recent),
     )
-    text = "".join(b.text for b in resp.content if b.type == "text").strip()
 
     telegram.send_message(text)
     memory.write_checkin(conn, "morning", "sent", text)
-    u = resp.usage
-    print(
-        f"morning sent ({source} blocks) | tokens in={u.input_tokens} out={u.output_tokens} "
-        f"cache_read={u.cache_read_input_tokens} cache_write={u.cache_creation_input_tokens}"
-    )
+    print(f"morning sent ({source} blocks) | {usage}")
 
 
 if __name__ == "__main__":
