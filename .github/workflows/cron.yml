@@ -46,10 +46,10 @@ jobs:
           fi
 
       - name: Restore Google token (optional)
-        if: ${{ env.GOOGLE_TOKEN_JSON != '' }}
         env:
           GOOGLE_TOKEN_JSON: ${{ secrets.GOOGLE_TOKEN_JSON }}
-        run: echo "$GOOGLE_TOKEN_JSON" > token.json
+        run: |
+          if [ -n "$GOOGLE_TOKEN_JSON" ]; then echo "$GOOGLE_TOKEN_JSON" > token.json; fi
 
       - name: Run Jarvis
         env:
