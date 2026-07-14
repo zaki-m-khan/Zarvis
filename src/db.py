@@ -27,7 +27,9 @@ class Conn:
 
     def execute(self, sql: str, params=()):
         if self.is_pg:
-            sql = sql.replace("?", "%s")
+            # psycopg treats % as a placeholder marker, so escape literal % first
+            # (some queries use LIKE '[%'), THEN translate our ?-style to %s.
+            sql = sql.replace("%", "%%").replace("?", "%s")
         return self.raw.execute(sql, params)
 
     def commit(self) -> None:
@@ -118,7 +120,11 @@ def connect(path: str | None = None) -> Conn:
     if url.startswith(("postgres://", "postgresql://")):
         import psycopg
 
-        conn = Conn(psycopg.connect(url, autocommit=False), is_pg=True)
+        raw = psycopg.connect(url, autocommit=False)
+        # Supabase transaction pooler (pgbouncer, :6543) can't keep server-side
+        # prepared statements across transactions — disable psycopg auto-prepare.
+        raw.prepare_threshold = None
+        conn = Conn(raw, is_pg=True)
         for stmt in _schema("BIGSERIAL PRIMARY KEY"):
             conn.execute(stmt)
         conn.commit()
