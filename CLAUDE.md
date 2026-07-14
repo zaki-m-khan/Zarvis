@@ -53,10 +53,13 @@ Telegram ──webhook──▶ /webhook/telegram            ├─ serves dashb
 
 Tokens generated 2026-07-14 (webhook secret / RUN_TOKEN / DASH_TOKEN) live in Render + GitHub only — never committed. Dashboard access: `https://zarvis.onrender.com/?key=<DASH_TOKEN>` (stored in localStorage).
 
-## Pending manual items (need Zaki's dashboards — can't be automated)
+## Pending manual item (needs Zaki's Google login — can't be automated)
 
-1. **`GOOGLE_TOKEN_JSON` on Render** is unset/expired → `/api/state` shows `blocks_source: template` instead of real Google Calendar. Paste `token.json` contents into Render → Environment. (It IS set as a GitHub secret, but Render needs its own copy.)
-2. **`LANGFUSE_PUBLIC_KEY`/`SECRET_KEY` on Render** — keys validated (US host, in render.yaml). If not pasted during blueprint setup, tracing is a silent no-op until added.
+**Google Calendar token is expired/revoked** → `/api/state` shows `blocks_source: template`. Diagnosed 2026-07-14: `GOOGLE_TOKEN_JSON` IS set correctly on Render, but the refresh token (minted Jul 3) is dead — `invalid_grant: Token has been expired or revoked`. Root cause: the OAuth consent screen is in **"Testing"** status, and Google expires those refresh tokens after 7 days (died ~Jul 10; the real→template switch is visible in the message history). Two-step fix:
+1. `python -m scripts.reauth_google` → browser consent → fresh `token.json`; paste the printed JSON into Render `GOOGLE_TOKEN_JSON` (auto-redeploys).
+2. **Permanent:** Google Cloud Console → OAuth consent screen → **Publish app / "In production"** so refresh tokens stop dying every 7 days.
+
+Everything else is done (Langfuse verified live on Render, `langfuse: true`). Non-blocking: template blocks are correct for the current fixed schedule.
 
 ## Known caveats
 
