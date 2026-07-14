@@ -4,66 +4,74 @@ This file is the complete context for continuing this project in a fresh Claude 
 
 ## What this project is
 
-**Jarvis/ZARVIS** — Zaki Khan's summer accountability system, and his flagship resume project (goal: PM/AI roles, class of 2027). Two parts:
+**Jarvis/ZARVIS** — Zaki Khan's summer accountability system, and his flagship resume project (goal: PM/AI roles, class of 2027). Now Phase 5, deployed. Two parts, one always-on service:
 
-1. **`/` (repo root) — the agent.** A Python Telegram bot that messages Zaki twice daily: a 7:00 AM ET nudge naming his real calendar blocks, and a 9:00 PM ET check-in that ingests his replies + button taps into SQLite and auto-tallies a weekly scoreboard. Runs serverless on GitHub Actions cron. LLM: `gpt-5.4-mini` via OpenAI API (~$0.0025/message; Zaki has ~$5 in OpenAI credits, budget is <$5/month).
-2. **`dashboard/` — the ZARVIS HUD.** A Vite + React sci-fi dashboard (Iron-Man-JARVIS aesthetic), faithfully implemented from a claude.ai/design export. Currently displays **hardcoded demo data** — wiring it to the real SQLite data is a planned next step. Run with `npm install && npm run dev` inside `dashboard/`.
+1. **the agent** (`src/`). A Python Telegram bot that messages Zaki twice daily (7:00 AM nudge, 9:00 PM check-in) plus a Sunday 4:30 PM weekly review. Runs through a **LangGraph** loop (`src/agent.py`) with tool nodes + coded guardrails. Real-time conversation via Telegram **webhook** (no more polling latency). LLM: `gpt-5.4-mini` via OpenAI (provider switch in `src/llm.py` only). Multi-user: friends self-onboard.
+2. **the ZARVIS HUD** (`dashboard/`). Vite + React sci-fi dashboard, now **wired to live data** via `GET /api/state` (poll) and `POST /api/chat` (the Comms panel talks to the real agent). Falls back to demo values only when the API is unreachable.
 
-## Current status (verified live as of July 3, 2026)
+Both are served by one **FastAPI** app (`src/server.py`) on Render, backed by **Supabase Postgres**. GitHub Actions cron is now just the scheduler (curls the run endpoints).
 
-- ✅ **Phase 0 complete** (spec §8): bot live (@ZARVISv1_bot), morning + evening runs verified end-to-end on Zaki's phone, GitHub Actions cron firing at 11:00/01:00 UTC, all failures fail-loud to Telegram.
-- ✅ **Phase 1 complete**: free-text replies parsed into a Pydantic `CheckIn` (gym/outreach/calls/clay/steps/weight/milestone), inline keyboard buttons on the evening message (tap = structured log), weekly scoreboard auto-tallied from the `checkins` table into the `scoreboard` table.
-- ✅ **Google Calendar read** connected (pulled forward from Phase 2): OAuth done locally, reads two calendars — `primary` + `zmk227@lehigh.edu` (where the recurring blocks live), merged and time-sorted. Falls back to the hardcoded weekly template on any failure.
-- ✅ Tests: `pytest tests/` — 6 tests covering schema, allowlist, calendar fallback, CheckIn model, button extraction, scoreboard tally.
+## Current status (deployed & verified live, July 14, 2026)
 
-## Architecture (deliberately boring — see spec §11 rules)
+- ✅ **Live in production:** https://zarvis.onrender.com (Render free) + Supabase Postgres + GitHub Actions cron. Full history migrated (40 real check-ins Jul 4–14). Morning run, real-time webhook, and the GitHub-Actions→Render cron path all verified end-to-end on Zaki's phone.
+- ✅ **Phase 0–1** (unchanged): bot, `CheckIn` parsing, inline buttons, weekly scoreboard.
+- ✅ **Phase 2:** `src/agent.py` LangGraph graph — agent⇄tool nodes (`read_calendar`, `read_scoreboard`, `log_checkin`), conditional END edge (reply composed → END), **hard rail >5 tool calls → fallback → END**, 90s timeout.
+- ✅ **Phase 3:** FastAPI webhook (real-time chat + buttons + fact-approval), `/api/run/{morning|evening|sunday}`, `src/runs/sunday.py` weekly review + **consolidation gate** (≤3 proposed facts, ✅/❌ buttons; facts enter memory only on approval, stored in the `facts` table since Render's disk is ephemeral).
+- ✅ **Phase 4:** optional Langfuse tracing (`src/tracing.py`), `evals/judge.py` LLM-as-judge (4 dims) + `evals/rubric.md`, **prompt v2 shipped** (`PROMPT_VERSION="v2"`, specificity 4.33→sample 5.0, documented in README).
+- ✅ **Phase 5:** `users`/`facts`/`evals` tables, per-user memory + targets, `src/onboarding.py` self-serve interview → drafted plan → approve buttons (gated by `ONBOARDING_OPEN`, default off).
+- ✅ Tests: `pytest tests/` — **26 tests** (storage/dual-driver, agent guardrails, server routing/auth, onboarding, evals).
+
+## Architecture
 
 ```
-GitHub Actions cron (11:00 & 01:00 UTC)
-  └─ python -m src.runs.morning | evening   (plain loop, no framework yet)
-       ├─ src/memory.py      loads memory/*.md (system prompt) + last-7-days checkins (SQL)
-       ├─ src/tools/calendar.py  Google Calendar read-only → template fallback
-       ├─ src/tools/telegram.py  send (with inline buttons) / getUpdates polling, chat_id allowlist
-       ├─ src/llm.py         provider switch: OPENAI_API_KEY → gpt-5.4-mini, else claude-haiku-4-5
-       │                     compose() = the message; parse_checkin() = replies → CheckIn JSON
-       ├─ src/scoreboard.py  re-tallies week from checkins (json_extract), upserts scoreboard table
-       └─ src/runs/guard.py  90s timeout + crash → plain-text Telegram error (fail loud)
-SQLite (jarvis.db): checkins, scoreboard, kv (telegram offset). Persisted between cloud runs via actions/cache.
+GitHub Actions cron ──curl /api/run/{type}──▶ Render web service (FastAPI, src/server.py)
+  11:00 / 01:00 / Sun 20:30 UTC   (X-Run-Token)   ├─ POST /webhook/telegram  real-time chat/buttons/onboarding
+                                                   ├─ GET /api/state · POST /api/chat  (X-Dash-Token)
+Telegram ──webhook──▶ /webhook/telegram            ├─ serves dashboard/dist (the HUD)
+                                                   └─ src/agent.py  LangGraph: agent⇄tools, ≤5 calls, END guards
+                                                          │ src/memory.py (per-user md+DB facts), llm.py (provider switch),
+                                                          │ tools/calendar.py (Google→template), tools/telegram.py, scoreboard.py
+                                                   Supabase Postgres  (DATABASE_URL; SQLite when unset — local/tests)
+                                                     checkins · scoreboard · kv · users · facts · evals
 ```
 
 **Key decisions already made (don't relitigate):**
-- Plain Python loop now; LangGraph refactor is Phase 2 in the spec ("boring before clever").
-- SQL-first memory, no RAG/embeddings until an eval proves the need (spec §5).
-- Provider switch lives in `src/llm.py` only — one file to change models.
-- Calendar is read-only; write access (via MCP) is deferred.
-- Costs stay near zero: free tiers, cheap model, prompt prefix kept byte-stable for caching (memory files first in system prompt, no timestamps there).
+- `src/db.py` is dual-driver: `DATABASE_URL=postgres://…` → psycopg (escapes `%`→`%%`, disables auto-prepare for the Supabase transaction pooler), else SQLite. All SQL uses `?` placeholders; the shim rewrites for PG. **Keep every dialect difference in db.py.**
+- Scoreboard tallies in **Python** (`src/scoreboard.py`), not SQL — runs identically on both drivers.
+- Provider switch lives in `src/llm.py` only (`get_chat_model` for the graph, `compose`/`json_call` for raw calls).
+- Durable facts live in the `facts` table, not `facts.md` (ephemeral disk); the md files seed Zaki's user row.
+- Costs near zero: Render free + Supabase free + GH Actions. Cold starts (~50s) accepted; cron doubles as a waker.
 
 ## Secrets & machine-local files (NOT in git — must be transferred manually)
 
-| File / secret | Where it is now | Needed for |
+| File / secret | Where | Notes |
 |---|---|---|
-| `.env` | Zaki's machine, repo root | local runs — contains `OPENAI_API_KEY`, `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` (8749623890), `GOOGLE_CALENDAR_CREDENTIALS_JSON=./credentials.json`, `GOOGLE_CALENDAR_IDS=primary,zmk227@lehigh.edu`, `DATABASE_PATH=./jarvis.db` |
-| `credentials.json` | Zaki's machine | Google OAuth client (desktop app) |
-| `token.json` | Zaki's machine | cached Google consent — copy it, or re-run any run locally to redo the browser flow |
-| GitHub repo secrets | github.com/zaki-m-khan/Zarvis → Settings → Actions | `OPENAI_API_KEY`, `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` are set. **`GOOGLE_TOKEN_JSON` (= contents of token.json) is still MISSING** — until added, cloud runs use the template fallback instead of real calendar. |
+| `.env` | Zaki's machine, `jarvis/` | local runs (SQLite). `OPENAI_API_KEY`, `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` (8749623890), `GOOGLE_CALENDAR_*`, `DATABASE_PATH=./jarvis.db`. Leave `DATABASE_URL` unset locally to use SQLite. |
+| `credentials.json`, `token.json` | Zaki's machine | Google OAuth client + cached consent. |
+| **Render** env (dashboard → Environment) | render.com service `zarvis` | `DATABASE_URL` (Supabase pooler), `OPENAI_API_KEY`, `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`, `RUN_TOKEN`, `DASH_TOKEN`, `WEBHOOK_MODE=1`, `LANGFUSE_*` (+ `LANGFUSE_HOST` US). Blueprint: `render.yaml` (non-secrets baked in). |
+| **GitHub** Actions secrets | repo → Settings → Actions | `OPENAI_API_KEY`, `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`, `GOOGLE_TOKEN_JSON`, **`RENDER_URL`, `RUN_TOKEN`** (set 2026-07-14 — cron curls Render with these). |
 
-New machine setup: clone repo → `python -m venv .venv` → `pip install -r requirements.txt` → copy `.env` + `credentials.json` + `token.json` from old machine (or recreate per README checklist) → `pytest tests/` → `python -m src.runs.morning` should put a message on Zaki's phone.
+Tokens generated 2026-07-14 (webhook secret / RUN_TOKEN / DASH_TOKEN) live in Render + GitHub only — never committed. Dashboard access: `https://zarvis.onrender.com/?key=<DASH_TOKEN>` (stored in localStorage).
+
+## Pending manual items (need Zaki's dashboards — can't be automated)
+
+1. **`GOOGLE_TOKEN_JSON` on Render** is unset/expired → `/api/state` shows `blocks_source: template` instead of real Google Calendar. Paste `token.json` contents into Render → Environment. (It IS set as a GitHub secret, but Render needs its own copy.)
+2. **`LANGFUSE_PUBLIC_KEY`/`SECRET_KEY` on Render** — keys validated (US host, in render.yaml). If not pasted during blueprint setup, tracing is a silent no-op until added.
 
 ## Known caveats
 
-- **Polling latency (by design, v1):** button taps and replies are ingested at the *next* scheduled run, not instantly. The bot cannot hold a conversation yet — that's the webhook phase.
 - **DST:** cron times are UTC; after November DST they fire 1hr early ET (comment in cron.yml).
-- **Two databases exist:** the local `jarvis.db` (from testing) and the cloud one in GitHub Actions cache. The cloud one is the real one going forward. Dashboard wiring must decide the single source of truth (see roadmap).
-- **Double-count edge:** two parsed text check-ins in one day both reporting outreach are summed (accepted for v1).
-- **Windows console:** printing emoji from calendar events crashes cp1252 — use `PYTHONIOENCODING=utf-8` for debug scripts (runtime code never prints event names).
+- **Cold starts:** Render free spins down after idle (~50s first hit); Telegram retries + the cron waker cover it.
+- **Fixed 6 metric slots** for all users (targets per-user) in onboarding v1.
+- **Double-count edge:** two text check-ins in one day both reporting outreach are summed (accepted for v1).
+- **Windows debug:** `PYTHONIOENCODING=utf-8` for scripts that print emoji (cp1252 crash). Local server needs `check_same_thread=False` (set) since requests run on worker threads.
 
-## Roadmap (in order — next step first)
+## Roadmap (phases 0–5 done; what's next)
 
-1. **Dashboard wiring** (what Zaki wants next): replace hardcoded values in `dashboard/src/App.jsx` (`renderVals()`) with real data — scoreboard panel ← `scoreboard` table, comms feed ← `checkins`, weight ← parsed weigh-ins. Needs a small API or db-sync step; the clean long-term answer is the same as #2:
-2. **Phase 3 — always-on host (Railway) + Telegram webhook**: real-time conversation ("what's on my schedule Monday?" should get an answer), kills polling latency, gives the dashboard a live backend + persistent db in one move. Spec also wants the Sunday 4:30 PM summarizer run and the facts.md consolidation gate (append durable facts only with Zaki's yes/no button approval).
-3. **Phase 2 leftovers**: LangGraph refactor (proper graph, tool nodes, conditional END edges).
-4. **Phase 4 — LLM ops**: Langfuse tracing, LLM-as-judge eval (`evals/rubric.md` seed is in spec §9), ship a measured prompt v2, bump `PROMPT_VERSION`.
-5. **Phase 5 — multi-user**: users table, per-user memory files, SQLite → Supabase, onboard Muz + 1–2 friends. This is what makes it a product.
+1. **Turn on onboarding** (`ONBOARDING_OPEN=1` on Render) and onboard Muz + 1–2 friends — the "it's a product" milestone. Interview flow is built and tested; just gated off.
+2. **Weekly eval loop as a habit:** run `python -m evals.judge` after a week of v2 messages; if any dimension avg < 3.5, iterate to v3 (bump `PROMPT_VERSION`, document in README).
+3. **Calendar write** (via MCP) — deferred; currently read-only.
+4. Polish: real weight-logging habit lights up the Cut Trajectory (currently DEMO until a weigh-in is logged); consider per-user metric sets beyond the fixed 6.
 
 ## Working agreements (from the spec + user preferences)
 
