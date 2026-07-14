@@ -383,6 +383,9 @@ export default class ZarvisDashboard extends React.Component {
       lastRun, nextRun,
       toolLabel: used + ' / 5 LAST RUN',
       toolSegs, guards,
+      promptVersion: live ? live.prompt_version : null,
+      model: live ? live.model : null,
+      langfuse: live ? live.langfuse : false,
       metrics, onPaceLabel, weekSquares,
       countdowns,
       messages,
@@ -425,7 +428,7 @@ export default class ZarvisDashboard extends React.Component {
           {/* LEFT COLUMN */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minHeight: 0 }}>
             <TodayBlocks blocks={v.blocks} blockNote={v.blockNote} />
-            <AgentStatus lastRun={v.lastRun} nextRun={v.nextRun} toolLabel={v.toolLabel} toolSegs={v.toolSegs} guards={v.guards} />
+            <AgentStatus lastRun={v.lastRun} nextRun={v.nextRun} toolLabel={v.toolLabel} toolSegs={v.toolSegs} guards={v.guards} promptVersion={v.promptVersion} model={v.model} langfuse={v.langfuse} />
           </div>
 
           <Core weekLabel={v.weekLabel} ringDash={v.ringDash} coreStatus={v.coreStatus} speaking={v.speaking} voiceLine={v.voiceLine} bars={v.bars} />

@@ -1,6 +1,8 @@
 const mono = "'Share Tech Mono',monospace"
 
-export default function AgentStatus({ lastRun, nextRun, toolLabel, toolSegs, guards }) {
+export default function AgentStatus({ lastRun, nextRun, toolLabel, toolSegs, guards, promptVersion, model, langfuse }) {
+  const modelLabel = (model || 'sonnet-4-6').toUpperCase()
+  const lfColor = langfuse ? '#7CFFA9' : 'rgba(140,190,215,.5)'
   return (
     <div className="panel" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: 'linear-gradient(180deg, rgba(13,26,38,.7), rgba(7,14,22,.85))', border: '1px solid rgba(53,224,255,.18)', borderRadius: 6, padding: '16px 18px', position: 'relative', animation: 'panelin .5s ease .25s both' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
@@ -37,9 +39,9 @@ export default function AgentStatus({ lastRun, nextRun, toolLabel, toolSegs, gua
         ))}
       </div>
       <div style={{ marginTop: 'auto', paddingTop: 10, display: 'flex', gap: 14, borderTop: '1px solid rgba(53,224,255,.12)' }}>
-        <span style={{ fontFamily: mono, fontSize: 9.5, color: 'rgba(140,190,215,.5)', letterSpacing: 1 }}>PROMPT v1</span>
-        <span style={{ fontFamily: mono, fontSize: 9.5, color: 'rgba(140,190,215,.5)', letterSpacing: 1 }}>SONNET-4-6</span>
-        <span style={{ fontFamily: mono, fontSize: 9.5, color: 'rgba(140,190,215,.5)', letterSpacing: 1 }}>LANGFUSE ●</span>
+        <span style={{ fontFamily: mono, fontSize: 9.5, color: 'rgba(140,190,215,.5)', letterSpacing: 1 }}>PROMPT {promptVersion || 'v1'}</span>
+        <span style={{ fontFamily: mono, fontSize: 9.5, color: 'rgba(140,190,215,.5)', letterSpacing: 1 }}>{modelLabel}</span>
+        <span style={{ fontFamily: mono, fontSize: 9.5, color: lfColor, letterSpacing: 1 }}>LANGFUSE ●</span>
       </div>
     </div>
   )

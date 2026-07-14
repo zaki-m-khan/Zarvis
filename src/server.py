@@ -18,7 +18,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from src import agent, db, llm, memory, onboarding, scoreboard
+from src import agent, db, llm, memory, onboarding, prompts, scoreboard, tracing
 from src.models import CheckIn
 from src.runs import evening, morning, sunday
 from src.tools import calendar, telegram
@@ -199,6 +199,9 @@ async def api_state(request: Request):
             "last_run": json.loads(last_run) if last_run else None,
             "checkin_count": checkin_count,
             "active_users": len(db.active_users(conn)),
+            "prompt_version": prompts.PROMPT_VERSION,
+            "model": llm.active_model(),
+            "langfuse": tracing.enabled(),
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
     finally:

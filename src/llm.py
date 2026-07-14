@@ -10,6 +10,11 @@ OPENAI_MODEL = "gpt-5.4-mini"
 ANTHROPIC_MODEL = "claude-haiku-4-5"
 
 
+def active_model() -> str:
+    """The model the provider switch will actually use, for display/telemetry."""
+    return OPENAI_MODEL if os.environ.get("OPENAI_API_KEY") else ANTHROPIC_MODEL
+
+
 def get_chat_model():
     """LangChain chat model for the agent graph. Same provider switch as compose()."""
     if os.environ.get("OPENAI_API_KEY"):
