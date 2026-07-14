@@ -1,6 +1,5 @@
 """Telegram send/receive via raw HTTP. Hard chat_id allowlist — ignore all other senders."""
 import os
-import sqlite3
 
 import requests
 
@@ -35,12 +34,24 @@ def _allowed_chat_id() -> int:
     return int(os.environ["TELEGRAM_CHAT_ID"])
 
 
-def send_message(text: str, buttons: list | None = None) -> None:
-    payload: dict = {"chat_id": _allowed_chat_id(), "text": text}
+def send_message(text: str, buttons: list | None = None, chat_id: int | None = None) -> None:
+    payload: dict = {"chat_id": chat_id if chat_id is not None else _allowed_chat_id(), "text": text}
     if buttons:
         payload["reply_markup"] = {"inline_keyboard": buttons}
     resp = requests.post(_api("sendMessage"), json=payload, timeout=30)
     resp.raise_for_status()
+
+
+def answer_callback(callback_query_id: str, text: str = "") -> None:
+    """Ack a button tap so Telegram clears the loading spinner. Never raises."""
+    try:
+        requests.post(
+            _api("answerCallbackQuery"),
+            json={"callback_query_id": callback_query_id, "text": text},
+            timeout=10,
+        )
+    except Exception:
+        pass
 
 
 def _extract_updates(updates: list[dict], allowed_chat_id: int) -> tuple[list[str], list[str]]:
@@ -56,7 +67,7 @@ def _extract_updates(updates: list[dict], allowed_chat_id: int) -> tuple[list[st
     return texts, taps
 
 
-def read_replies(conn: sqlite3.Connection) -> tuple[list[str], list[str]]:
+def read_replies(conn) -> tuple[list[str], list[str]]:
     """Poll getUpdates with the offset persisted in the kv table. Returns (texts, button_taps)."""
     offset = int(db.kv_get(conn, "tg_offset", "0"))
     resp = requests.get(_api("getUpdates"), params={"offset": offset + 1, "timeout": 0}, timeout=30)

@@ -9,11 +9,30 @@ import Comms from './components/Comms.jsx'
 import TMinus from './components/TMinus.jsx'
 import BootOverlay from './components/BootOverlay.jsx'
 
+// Dash token: ?key=… in the URL (stored once), else localStorage, else vite env (dev).
+function resolveToken() {
+  try {
+    const url = new URL(window.location.href)
+    const key = url.searchParams.get('key')
+    if (key) {
+      localStorage.setItem('zarvis_token', key)
+      url.searchParams.delete('key')
+      window.history.replaceState({}, '', url.toString())
+    }
+    return localStorage.getItem('zarvis_token') || import.meta.env.VITE_DASH_TOKEN || ''
+  } catch {
+    return ''
+  }
+}
+
 export default class ZarvisDashboard extends React.Component {
   constructor(props) {
     super(props)
+    this.token = resolveToken()
     this.state = {
       now: Date.now(),
+      live: null,          // /api/state payload; null = demo fallback
+      commsLoaded: false,
       booting: true,
       bootFading: false,
       bootN: 0,
@@ -46,7 +65,31 @@ export default class ZarvisDashboard extends React.Component {
     this.replyCycle = 0
   }
 
+  fetchState = async () => {
+    try {
+      const r = await fetch('/api/state', { headers: { 'X-Dash-Token': this.token } })
+      if (!r.ok) return
+      const live = await r.json()
+      // Real numbers into the boot sequence (only visible if it hasn't finished yet).
+      this.bootLines[3] = `episodic log ................. LIVE DB · ${live.checkin_count} check-ins`
+      this.bootLines[5] = live.blocks_source === 'google'
+        ? 'calendar sync ................ google · LIVE ✓'
+        : 'calendar sync ................ template fallback'
+      this.setState(s => {
+        const next = { live }
+        if (!s.commsLoaded && live.comms && live.comms.length) {
+          next.messages = live.comms.map(m => ({ who: m.who, time: m.time, text: m.text }))
+          next.commsLoaded = true
+        }
+        if (live.last_run) next.toolsUsed = Math.min(5, live.last_run.tools_used ?? 0)
+        return next
+      })
+    } catch { /* backend offline -> stay in demo mode */ }
+  }
+
   componentDidMount() {
+    this.fetchState()
+    this.timers.push(setInterval(this.fetchState, 60000))
     this.timers.push(setInterval(() => this.setState({ now: Date.now() }), 1000))
     if ((this.props.boot ?? true) === false) {
       this.setState({ booting: false })
@@ -89,7 +132,14 @@ export default class ZarvisDashboard extends React.Component {
   greet() {
     const h = new Date().getHours()
     const tod = h < 12 ? 'Morning' : h < 18 ? 'Afternoon' : 'Evening'
-    this.typeVoice(tod + ", Zaki. Systems online. 4 of 6 metrics on pace — Clay table is the open loop. Blocks are loaded below. Let's have a green week.")
+    const live = this.state.live
+    if (live && live.scoreboard) {
+      const hit = Object.values(live.scoreboard).filter(m => m.value >= m.target).length
+      const name = live.user || 'Zaki'
+      this.typeVoice(`${tod}, ${name}. Systems online — live uplink to the real database. ${hit} of 6 metrics hit this week. Blocks are loaded below. Let's have a green week.`)
+    } else {
+      this.typeVoice(tod + ", Zaki. Systems online. Running on demo data — backend uplink not found. Start the API to go live.")
+    }
   }
 
   typeVoice(text) {
@@ -130,7 +180,20 @@ export default class ZarvisDashboard extends React.Component {
   send = () => {
     const t = this.state.input.trim()
     if (!t || this.chatTyping) return
-    this.setState(s => ({ messages: [...s.messages, { who: 'ZAKI', time: this.nowTime(), text: t }], input: '' }))
+    const who = (this.state.live && this.state.live.user ? this.state.live.user : 'ZAKI').toUpperCase()
+    this.setState(s => ({ messages: [...s.messages, { who, time: this.nowTime(), text: t }], input: '' }))
+    if (this.state.live) {
+      // Live uplink: the real agent (LangGraph + tools) answers.
+      fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Dash-Token': this.token },
+        body: JSON.stringify({ text: t })
+      })
+        .then(r => (r.ok ? r.json() : Promise.reject(new Error(r.status))))
+        .then(({ reply }) => { this.typeChat(reply); this.fetchState() })
+        .catch(() => this.typeChat('Uplink hiccup — that one did not reach the mainframe. Try again.'))
+      return
+    }
     const r = this.reply(t)
     this.timers.push(setTimeout(() => this.typeChat(r), 650))
   }
@@ -167,24 +230,36 @@ export default class ZarvisDashboard extends React.Component {
     const timeStr = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds())
     const dateStr = days[d.getDay()] + ' · ' + months[d.getMonth()] + ' ' + pad(d.getDate()) + ' · ' + d.getFullYear()
 
-    // ---- today's blocks (from SUMMER_PLAN weekly template) ----
+    const live = this.state.live
+
+    // ---- today's blocks: live Google Calendar via /api/state, else SUMMER_PLAN weekly template ----
     const dow = d.getDay()
     const mins = d.getHours() * 60 + d.getMinutes()
     let defs = []
-    if (dow >= 1 && dow <= 5) {
+    if (live && live.blocks && live.blocks.length) {
+      defs = live.blocks.map(b => {
+        const times = (b.time.match(/(\d{1,2}):(\d{2})/g) || []).map(t => {
+          const [h, m] = t.split(':').map(Number)
+          return h * 60 + m
+        })
+        const start = times.length ? times[0] : 0
+        const end = times.length > 1 ? times[1] : (times.length ? start + 60 : 1440)
+        return { time: b.time, name: b.name.toUpperCase(), start, end }
+      })
+    } else if (dow >= 1 && dow <= 5) {
       defs.push({ time: '12:30–13:00', name: '🎯 RECRUITING BLOCK', sub: '5 outreaches', start: 750, end: 780 })
       defs.push({ time: '18:30–20:00', name: '💪 GYM · PPL', start: 1110, end: 1200 })
-    }
-    if (dow === 2 || dow === 4) defs.push({ time: '20:45–22:45', name: '🛠️ BUILD BLOCK · JARVIS', start: 1245, end: 1365 })
-    if (dow === 5) defs.push({ time: '17:15–18:00', name: '🧱 CLAY SEND RITUAL', start: 1035, end: 1080 })
-    if (dow === 0) {
+      if (dow === 2 || dow === 4) defs.push({ time: '20:45–22:45', name: '🛠️ BUILD BLOCK · JARVIS', start: 1245, end: 1365 })
+      if (dow === 5) defs.push({ time: '17:15–18:00', name: '🧱 CLAY SEND RITUAL', start: 1035, end: 1080 })
+    } else if (dow === 0) {
       defs = [
         { time: '10:00–14:00', name: '🧠 SUNDAY DEEP WORK', start: 600, end: 840 },
         { time: '17:00–17:30', name: '📊 WEEKLY REVIEW', start: 1020, end: 1050 },
         { time: '18:00–19:30', name: '🍗 MEAL PREP', start: 1080, end: 1170 }
       ]
+    } else if (dow === 6) {
+      defs = [{ time: 'ALL DAY', name: 'SOCIAL / FLEX — GUILT-FREE', start: 0, end: 1440 }]
     }
-    if (dow === 6) defs = [{ time: 'ALL DAY', name: 'SOCIAL / FLEX — GUILT-FREE', start: 0, end: 1440 }]
     const blocks = defs.map(b => {
       const done = mins > b.end, active = mins >= b.start && mins <= b.end
       return {
@@ -210,6 +285,11 @@ export default class ZarvisDashboard extends React.Component {
     if (mins < morning) { lastRun = 'YESTERDAY 21:00 · EVENING ✓'; nextRun = '07:00 MORNING · ' + toNext(morning) }
     else if (mins < evening) { lastRun = '07:00 · MORNING NUDGE ✓'; nextRun = '21:00 CHECK-IN · ' + toNext(evening) }
     else { lastRun = '21:00 · CHECK-IN ✓'; nextRun = '07:00 MORNING · ' + toNext(morning) }
+    if (live && live.last_run) {
+      const lr = new Date(live.last_run.ts)
+      lastRun = String(lr.getHours()).padStart(2, '0') + ':' + String(lr.getMinutes()).padStart(2, '0') +
+        ' · ' + live.last_run.type.toUpperCase() + ' ✓'
+    }
 
     const used = this.state.toolsUsed
     const toolSegs = Array.from({ length: 5 }, (_, i) => i < used
@@ -230,15 +310,34 @@ export default class ZarvisDashboard extends React.Component {
       statusColor: tone, barColor: tone
     })
     const green = '#7CFFA9', amber = '#FFC14D'
-    const metrics = [
-      mk('OUTREACH SENT', '14 / 25', 14 / 25, 'ON PACE', accent),
-      mk('CALLS BOOKED', '2 / 3', 2 / 3, 'ON PACE', accent),
-      mk('CLAY TABLE', '0 / 1', 0.04, 'DUE FRI', amber),
-      mk('LIFTS · PPL', '3 / 5', 3 / 5, 'ON PACE', accent),
-      mk('STEPS AVG', '9.2K / 10K', 0.92, 'CLOSE', accent),
-      mk('JARVIS MILESTONE', '1 / 1', 1, 'HIT ✓', green)
-    ]
-    const onPaceLabel = 'WK OF JUL 06 · 4/6 ON PACE'
+    let metrics, onPaceLabel
+    if (live && live.scoreboard) {
+      const NAMES = {
+        outreach: 'OUTREACH SENT', calls: 'CALLS BOOKED', clay: 'CLAY TABLE',
+        lifts: 'LIFTS · PPL', steps: 'STEPS AVG', milestone: 'JARVIS MILESTONE'
+      }
+      const kfmt = n => n >= 1000 ? (n / 1000).toFixed(n % 1000 === 0 ? 0 : 1) + 'K' : String(Math.round(n * 10) / 10)
+      metrics = Object.entries(NAMES).map(([key, name]) => {
+        const m = live.scoreboard[key] || { value: 0, target: 1 }
+        const pct = m.target > 0 ? m.value / m.target : 0
+        const status = pct >= 1 ? 'HIT ✓' : pct >= 0.8 ? 'CLOSE' : pct > 0 ? 'ON PACE' : 'OPEN'
+        const tone = pct >= 1 ? green : pct > 0 ? accent : amber
+        return mk(name, `${kfmt(m.value)} / ${kfmt(m.target)}`, Math.max(pct, 0.02), status, tone)
+      })
+      const hit = metrics.filter(m => m.status === 'HIT ✓').length
+      const ws = new Date(live.week_start + 'T12:00:00')
+      onPaceLabel = 'WK OF ' + months[ws.getMonth()] + ' ' + pad(ws.getDate()) + ' · ' + hit + '/6 HIT · LIVE'
+    } else {
+      metrics = [
+        mk('OUTREACH SENT', '14 / 25', 14 / 25, 'ON PACE', accent),
+        mk('CALLS BOOKED', '2 / 3', 2 / 3, 'ON PACE', accent),
+        mk('CLAY TABLE', '0 / 1', 0.04, 'DUE FRI', amber),
+        mk('LIFTS · PPL', '3 / 5', 3 / 5, 'ON PACE', accent),
+        mk('STEPS AVG', '9.2K / 10K', 0.92, 'CLOSE', accent),
+        mk('JARVIS MILESTONE', '1 / 1', 1, 'HIT ✓', green)
+      ]
+      onPaceLabel = 'WK OF JUL 06 · 4/6 ON PACE · DEMO'
+    }
     const weekSquares = metrics.map(m => m.status === 'HIT ✓'
       ? { bg: green, glow: '0 0 8px rgba(124,255,169,.6)' }
       : m.status === 'DUE FRI'
@@ -276,8 +375,8 @@ export default class ZarvisDashboard extends React.Component {
       timeStr, dateStr,
       scanlines: this.props.scanlines ?? true,
       statusDots: [
-        { label: 'UPLINK', color: '#7CFFA9' },
-        { label: 'CAL', color: '#7CFFA9' },
+        { label: live ? 'UPLINK · LIVE' : 'UPLINK · DEMO', color: live ? '#7CFFA9' : '#FFC14D' },
+        { label: 'CAL', color: live && live.blocks_source === 'google' ? '#7CFFA9' : '#FFC14D' },
         { label: 'TRACE', color: accent }
       ],
       blocks, blockNote,
@@ -334,7 +433,7 @@ export default class ZarvisDashboard extends React.Component {
           {/* RIGHT COLUMN */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minHeight: 0 }}>
             <Scoreboard metrics={v.metrics} onPaceLabel={v.onPaceLabel} weekSquares={v.weekSquares} />
-            <CutTrajectory />
+            <CutTrajectory weights={this.state.live ? this.state.live.weights : null} />
           </div>
 
           <Comms messages={v.messages} input={v.input} onInput={v.onInput} onKey={v.onKey} send={v.send} feedRef={v.feedRef} />

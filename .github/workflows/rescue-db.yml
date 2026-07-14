@@ -1,0 +1,26 @@
+name: rescue-db
+
+# One-off: the pre-Phase-3 cron kept jarvis.db in the Actions cache. This job
+# restores that cache and uploads the db as an artifact so it can be merged
+# into Supabase (scripts/migrate_to_pg.py), then this workflow can be deleted.
+on:
+  workflow_dispatch:
+
+jobs:
+  rescue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/cache/restore@v4
+        with:
+          path: jarvis.db
+          key: jarvis-db-never-matches
+          restore-keys: jarvis-db-
+
+      - name: Check what we got
+        run: ls -la jarvis.db && sqlite3 jarvis.db "SELECT COUNT(*) FROM checkins;" || echo "NO CACHED DB FOUND"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloud-jarvis-db
+          path: jarvis.db
+          if-no-files-found: warn

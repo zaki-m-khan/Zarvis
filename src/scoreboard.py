@@ -1,7 +1,13 @@
-"""Weekly scoreboard: recomputed from the checkins table (source of truth), upserted into scoreboard."""
-import sqlite3
+"""Weekly scoreboard: recomputed from the checkins table (source of truth), upserted into scoreboard.
+
+Tally happens in Python (not SQL) so the same code runs on SQLite and Postgres.
+Volume is a few rows/day — this is deliberate, not lazy (spec §11: boring before clever).
+"""
+import json
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+
+from src import db
 
 ET = ZoneInfo("America/New_York")
 
@@ -21,36 +27,60 @@ def week_start(now: datetime | None = None) -> str:
     return monday.isoformat()
 
 
-def tally_week(conn: sqlite3.Connection, now: datetime | None = None) -> dict[str, float]:
+def tally_week(
+    conn,
+    chat_id: int | None = None,
+    now: datetime | None = None,
+    targets: dict | None = None,
+) -> dict[str, float]:
     """Recompute this week's metrics from structured checkins and upsert scoreboard rows."""
+    chat_id = db.default_chat_id() if chat_id is None else chat_id
+    targets = targets or TARGETS
     ws = week_start(now)
-    row = conn.execute(
-        """
-        SELECT
-          COALESCE(SUM(json_extract(structured, '$.outreach')), 0),
-          COALESCE(SUM(json_extract(structured, '$.calls')), 0),
-          COALESCE(MAX(json_extract(structured, '$.clay')), 0),
-          COUNT(DISTINCT CASE WHEN json_extract(structured, '$.gym') THEN date(ts) END),
-          COALESCE(AVG(json_extract(structured, '$.steps')), 0),
-          COALESCE(MAX(json_extract(structured, '$.milestone')), 0)
-        FROM checkins
-        WHERE structured IS NOT NULL AND date(ts) >= ?
-        """,
-        (ws,),
-    ).fetchone()
-    values = dict(zip(("outreach", "calls", "clay", "lifts", "steps", "milestone"), row))
+    rows = conn.execute(
+        "SELECT ts, structured FROM checkins "
+        "WHERE structured IS NOT NULL AND ts >= ? AND chat_id = ?",
+        (ws, chat_id),  # ISO timestamps: 'YYYY-MM-DD...' >= 'YYYY-MM-DD' string-compares correctly
+    ).fetchall()
+
+    outreach = calls = 0
+    clay = milestone = 0
+    gym_days: set[str] = set()
+    step_readings: list[float] = []
+    for ts, structured in rows:
+        s = json.loads(structured)
+        outreach += s.get("outreach") or 0
+        calls += s.get("calls") or 0
+        clay = max(clay, 1 if s.get("clay") else 0)
+        milestone = max(milestone, 1 if s.get("milestone") else 0)
+        if s.get("gym"):
+            gym_days.add(ts[:10])
+        if s.get("steps") is not None:
+            step_readings.append(float(s["steps"]))
+
+    values: dict[str, float] = {
+        "outreach": float(outreach),
+        "calls": float(calls),
+        "clay": float(clay),
+        "lifts": float(len(gym_days)),
+        "steps": (sum(step_readings) / len(step_readings)) if step_readings else 0.0,
+        "milestone": float(milestone),
+    }
     for metric, value in values.items():
         conn.execute(
-            "INSERT INTO scoreboard (week_start, metric, value, target) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(week_start, metric) DO UPDATE SET value = excluded.value",
-            (ws, metric, float(value), TARGETS[metric]),
+            "INSERT INTO scoreboard (chat_id, week_start, metric, value, target) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(chat_id, week_start, metric) DO UPDATE SET value = excluded.value, target = excluded.target",
+            (chat_id, ws, metric, value, float(targets.get(metric, TARGETS[metric]))),
         )
     conn.commit()
     return values
 
 
-def week_summary_text(conn: sqlite3.Connection, now: datetime | None = None) -> str:
-    values = tally_week(conn, now)
-    parts = [f"{m}: {values[m]:g}/{TARGETS[m]}" for m in TARGETS]
-    green = sum(1 for m in TARGETS if values[m] >= TARGETS[m])
+def week_summary_text(
+    conn, chat_id: int | None = None, now: datetime | None = None, targets: dict | None = None
+) -> str:
+    targets = targets or TARGETS
+    values = tally_week(conn, chat_id, now, targets)
+    parts = [f"{m}: {values[m]:g}/{targets.get(m, TARGETS[m]):g}" for m in TARGETS]
+    green = sum(1 for m in TARGETS if values[m] >= targets.get(m, TARGETS[m]))
     return f"Weekly scoreboard so far ({green}/6 hit): " + " · ".join(parts)

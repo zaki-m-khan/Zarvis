@@ -1,39 +1,28 @@
 name: jarvis-cron
 
+# Phase 3+: the bot lives on Render; this cron is just the free scheduler.
+# It curls the server's run endpoints (which also wakes the free instance from
+# spin-down — hence generous retries/timeouts).
 on:
   schedule:
-    # 7:00 AM EDT (11:00 UTC) and 9:00 PM EDT (01:00 UTC next day).
+    # 7:00 AM EDT (11:00 UTC) morning · 9:00 PM EDT (01:00 UTC next day) evening
+    # 4:30 PM EDT Sunday (20:30 UTC) summarizer
     # NOTE: cron is UTC — after the November DST change these fire 1hr early ET; adjust then.
     - cron: "0 11 * * *"
     - cron: "0 1 * * *"
+    - cron: "30 20 * * 0"
   workflow_dispatch:
     inputs:
       run_type:
         description: "Which run to execute"
         type: choice
-        options: [morning, evening]
+        options: [morning, evening, sunday]
         default: morning
 
 jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - run: pip install -r requirements.txt
-
-      # Persist jarvis.db between runs (restore latest, save under a fresh key each run)
-      - uses: actions/cache@v4
-        with:
-          path: jarvis.db
-          key: jarvis-db-${{ github.run_id }}
-          restore-keys: jarvis-db-
-
       - name: Decide run type
         id: decide
         run: |
@@ -41,22 +30,15 @@ jobs:
             echo "run_type=${{ inputs.run_type }}" >> "$GITHUB_OUTPUT"
           elif [ "$(date -u +%H)" -lt 6 ]; then
             echo "run_type=evening" >> "$GITHUB_OUTPUT"
+          elif [ "$(date -u +%H)" -ge 19 ]; then
+            echo "run_type=sunday" >> "$GITHUB_OUTPUT"
           else
             echo "run_type=morning" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Restore Google token (optional)
-        env:
-          GOOGLE_TOKEN_JSON: ${{ secrets.GOOGLE_TOKEN_JSON }}
+      - name: Trigger run on Render (retries cover cold start)
         run: |
-          if [ -n "$GOOGLE_TOKEN_JSON" ]; then echo "$GOOGLE_TOKEN_JSON" > token.json; fi
-
-      - name: Run Jarvis
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          DATABASE_PATH: ./jarvis.db
-          GOOGLE_CALENDAR_IDS: primary,zmk227@lehigh.edu
-        run: python -m src.runs.${{ steps.decide.outputs.run_type }}
+          curl -fsS -X POST \
+            "${{ secrets.RENDER_URL }}/api/run/${{ steps.decide.outputs.run_type }}" \
+            -H "X-Run-Token: ${{ secrets.RUN_TOKEN }}" \
+            --max-time 240 --retry 4 --retry-delay 20 --retry-all-errors

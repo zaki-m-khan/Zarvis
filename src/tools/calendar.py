@@ -1,6 +1,7 @@
-"""Read-only today's blocks: Google Calendar, with fallback to the SUMMER_PLAN weekly template."""
+"""Read-only calendar blocks: Google Calendar, with fallback to the SUMMER_PLAN weekly template."""
+import json
 import os
-from datetime import datetime, time, timedelta
+from datetime import date as date_cls, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 ET = ZoneInfo("America/New_York")
@@ -36,6 +37,9 @@ def _google_events(now: datetime) -> list[tuple[str, str]]:
     scopes = ["https://www.googleapis.com/auth/calendar.readonly"]
     if os.path.exists(TOKEN_PATH):
         creds = Credentials.from_authorized_user_file(TOKEN_PATH, scopes)
+    elif os.environ.get("GOOGLE_TOKEN_JSON"):
+        # Render/CI: no token file on the ephemeral disk — token comes via env.
+        creds = Credentials.from_authorized_user_info(json.loads(os.environ["GOOGLE_TOKEN_JSON"]), scopes)
     else:
         # One-time local OAuth flow; caches token.json for future runs.
         from google_auth_oauthlib.flow import InstalledAppFlow
@@ -47,7 +51,7 @@ def _google_events(now: datetime) -> list[tuple[str, str]]:
             f.write(creds.to_json())
 
     service = build("calendar", "v3", credentials=creds)
-    start = datetime.combine(now.date(), time.min, tzinfo=ET)
+    start = datetime.combine(now.date() if isinstance(now, datetime) else now, time.min, tzinfo=ET)
     end = start + timedelta(days=1)
     calendar_ids = os.environ.get("GOOGLE_CALENDAR_IDS", "primary").split(",")
     events = []
@@ -73,10 +77,17 @@ def _google_events(now: datetime) -> list[tuple[str, str]]:
     return blocks
 
 
+def get_events(on_date: date_cls | None = None) -> tuple[list[tuple[str, str]], str]:
+    """Blocks for a given date (default today). Returns (blocks, source: 'google'|'template'). Never raises."""
+    now = datetime.now(ET)
+    target = on_date or now.date()
+    try:
+        return _google_events(target), "google"
+    except Exception:
+        fake_now = datetime.combine(target, time(hour=12), tzinfo=ET)
+        return fallback_blocks(fake_now), "template"
+
+
 def get_today_events() -> tuple[list[tuple[str, str]], str]:
     """Returns (blocks, source) where source is 'google' or 'template'. Never raises."""
-    now = datetime.now(ET)
-    try:
-        return _google_events(now), "google"
-    except Exception:
-        return fallback_blocks(now), "template"
+    return get_events()

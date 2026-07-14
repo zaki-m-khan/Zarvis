@@ -1,0 +1,42 @@
+# Render blueprint — free web service running the FastAPI backend + ZARVIS dashboard.
+# Render Python environments include Node, so the vite build runs in buildCommand.
+services:
+  - type: web
+    name: zarvis
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt && cd dashboard && npm ci && npm run build
+    startCommand: uvicorn src.server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.4
+      - key: WEBHOOK_MODE
+        value: "1"
+      - key: ONBOARDING_OPEN
+        value: "0"
+      - key: PROMPT_VERSION
+        value: v2
+      - key: GOOGLE_CALENDAR_IDS
+        value: primary,zmk227@lehigh.edu
+      # Set these in the Render dashboard (sync: false = never in git):
+      - key: DATABASE_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: TELEGRAM_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      - key: RUN_TOKEN
+        sync: false
+      - key: DASH_TOKEN
+        sync: false
+      - key: GOOGLE_TOKEN_JSON
+        sync: false
+      - key: LANGFUSE_PUBLIC_KEY
+        sync: false
+      - key: LANGFUSE_SECRET_KEY
+        sync: false

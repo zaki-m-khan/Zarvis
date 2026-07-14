@@ -11,6 +11,9 @@ def run_guarded(run_type: str, fn) -> None:
         future = ex.submit(fn)
         try:
             future.result(timeout=TIMEOUT_S)
+            from src import tracing
+
+            tracing.flush()  # short-lived process: don't lose Langfuse spans on exit
             return
         except FutureTimeout:
             error = f"Jarvis {run_type} run timed out after {TIMEOUT_S}s. Check in manually?"

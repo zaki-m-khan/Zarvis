@@ -1,6 +1,12 @@
-"""System prompts, versioned. Keep system blocks byte-stable — no timestamps here (prompt caching)."""
+"""System prompts, versioned. Keep system blocks byte-stable — no timestamps here (prompt caching).
 
-PROMPT_VERSION = "v1"
+v2 (2026-07-14, eval-justified): judge on v1 history scored specificity lowest
+(4.33) with notes "could include exact time or history for stronger grounding"
+— v2 requires one exact scoreboard number, one exact block time, and one
+episodic reference when relevant, and pins the evening ask to a number.
+"""
+
+PROMPT_VERSION = "v2"
 
 
 def system_blocks(mem: dict[str, str]) -> list[dict]:
@@ -37,6 +43,8 @@ def morning_prompt(today_str: str, blocks: list[tuple[str, str]], source: str, r
         f"{_format_blocks(blocks, source)}\n\n"
         f"{board}\n\n"
         f"{_format_recent(recent)}\n\n"
+        "Be specific: cite at least one exact scoreboard number (e.g. 14/25) and one exact block time. "
+        "If the last 7 days contain something relevant, reference it once — Jarvis remembers. "
         "Write ONLY the Telegram message text, nothing else."
     )
 
@@ -57,5 +65,7 @@ def evening_prompt(
         f"{_format_recent(recent)}\n\n"
         "Ask about today's blocks and anything the scoreboard is missing (numbers like outreach count, "
         "steps, weight come from his typed replies; the buttons under your message log gym/steps/Clay/milestone). "
+        "Cite exact scoreboard numbers, not vibes. End with exactly ONE ask, and make it concrete with a "
+        "number (e.g. 'how many outreaches went out?'). "
         "Write ONLY the Telegram message text, nothing else."
     )

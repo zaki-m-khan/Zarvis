@@ -1,9 +1,24 @@
-"""LLM calls, provider by env var: OPENAI_API_KEY -> gpt-5.4-mini, else ANTHROPIC_API_KEY -> claude-haiku-4-5."""
+"""LLM calls, provider by env var: OPENAI_API_KEY -> gpt-5.4-mini, else ANTHROPIC_API_KEY -> claude-haiku-4-5.
+
+The provider switch lives in THIS file only (CLAUDE.md key decision) — both the
+raw compose/parse calls and the LangChain chat model used by src/agent.py.
+"""
 import json
 import os
 
 OPENAI_MODEL = "gpt-5.4-mini"
 ANTHROPIC_MODEL = "claude-haiku-4-5"
+
+
+def get_chat_model():
+    """LangChain chat model for the agent graph. Same provider switch as compose()."""
+    if os.environ.get("OPENAI_API_KEY"):
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(model=OPENAI_MODEL, max_completion_tokens=4000)
+    from langchain_anthropic import ChatAnthropic
+
+    return ChatAnthropic(model=ANTHROPIC_MODEL, max_tokens=1000)
 
 
 def compose(system_blocks: list[dict], user_text: str) -> tuple[str, str]:
@@ -53,19 +68,16 @@ PARSE_PROMPT = (
 )
 
 
-def parse_checkin(replies: list[str]):
-    """Parse free-text replies into a CheckIn. Returns None when nothing parseable."""
-    from src.models import CheckIn
-
-    text = PARSE_PROMPT.format(replies="\n".join(f"- {r}" for r in replies))
+def json_call(prompt: str, max_tokens: int = 500) -> dict:
+    """One-shot JSON-object completion on the cheap model (same provider switch). Returns {} on failure."""
     if os.environ.get("OPENAI_API_KEY"):
         from openai import OpenAI
 
         resp = OpenAI().chat.completions.create(
             model=OPENAI_MODEL,
-            max_completion_tokens=500,
+            max_completion_tokens=max_tokens,
             response_format={"type": "json_object"},
-            messages=[{"role": "user", "content": text}],
+            messages=[{"role": "user", "content": prompt}],
         )
         raw = resp.choices[0].message.content
     else:
@@ -73,13 +85,41 @@ def parse_checkin(replies: list[str]):
 
         resp = anthropic.Anthropic().messages.create(
             model=ANTHROPIC_MODEL,
-            max_tokens=500,
-            messages=[{"role": "user", "content": text}],
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}],
         )
         raw = "".join(b.text for b in resp.content if b.type == "text")
         raw = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
     try:
-        checkin = CheckIn.model_validate(json.loads(raw))
+        out = json.loads(raw)
+        return out if isinstance(out, dict) else {}
+    except Exception:
+        return {}
+
+
+def parse_checkin(replies: list[str]):
+    """Parse free-text replies into a CheckIn. Returns None when nothing parseable."""
+    from src.models import CheckIn
+
+    data = json_call(PARSE_PROMPT.format(replies="\n".join(f"- {r}" for r in replies)))
+    try:
+        checkin = CheckIn.model_validate(data)
         return checkin if checkin.has_data() else None
     except Exception:
         return None
+
+
+FACTS_PROMPT = (
+    "Below is one week of accountability check-ins between Jarvis and {name}. "
+    "Propose AT MOST 3 durable facts about {name} worth remembering permanently — patterns, "
+    "preferences, recurring obstacles (e.g. 'consistently skips Thursday build blocks after long "
+    "work days'). Only facts likely to still be true next month. If nothing durable emerged, "
+    "return an empty list. Return ONLY a JSON object: {{\"facts\": [\"...\"]}}\n\n"
+    "Week log:\n{log}"
+)
+
+
+def propose_facts(name: str, week_log: str) -> list[str]:
+    """Sunday consolidation: distill the week into <=3 proposed durable facts."""
+    facts = json_call(FACTS_PROMPT.format(name=name, log=week_log)).get("facts", [])
+    return [str(f).strip() for f in facts if str(f).strip()][:3]
