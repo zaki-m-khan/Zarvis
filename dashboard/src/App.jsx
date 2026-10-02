@@ -8,6 +8,7 @@ import CutTrajectory from './components/CutTrajectory.jsx'
 import Comms from './components/Comms.jsx'
 import TMinus from './components/TMinus.jsx'
 import BootOverlay from './components/BootOverlay.jsx'
+import Architecture from './components/Architecture.jsx'
 
 // Dash token: ?key=… in the URL (stored once), else localStorage, else vite env (dev).
 function resolveToken() {
@@ -31,6 +32,7 @@ export default class ZarvisDashboard extends React.Component {
     this.token = resolveToken()
     this.state = {
       now: Date.now(),
+      view: 'hud',         // 'hud' | 'arch' — top-bar tab selects the main view
       live: null,          // /api/state payload; null = demo fallback
       commsLoaded: false,
       booting: true,
@@ -220,6 +222,7 @@ export default class ZarvisDashboard extends React.Component {
 
   onInput = (e) => this.setState({ input: e.target.value })
   onKey = (e) => { if (e.key === 'Enter') this.send() }
+  setView = (view) => this.setState({ view })
 
   renderVals() {
     const accent = this.props.accent ?? '#35E0FF'
@@ -423,7 +426,7 @@ export default class ZarvisDashboard extends React.Component {
         {/* ===== MAIN GRID ===== */}
         <div style={{ position: 'absolute', inset: 0, display: 'grid', gridTemplateColumns: '390px 1fr 390px', gridTemplateRows: '56px 1fr 244px', gap: 14, padding: 16, zIndex: 1 }}>
 
-          <TopBar timeStr={v.timeStr} dateStr={v.dateStr} statusDots={v.statusDots} />
+          <TopBar timeStr={v.timeStr} dateStr={v.dateStr} statusDots={v.statusDots} view={this.state.view} onView={this.setView} />
 
           {/* LEFT COLUMN */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minHeight: 0 }}>
@@ -443,6 +446,9 @@ export default class ZarvisDashboard extends React.Component {
 
           <TMinus countdowns={v.countdowns} />
         </div>
+
+        {/* ===== ARCHITECTURE VIEW (top-bar tab) ===== */}
+        {this.state.view === 'arch' && <Architecture />}
 
         {/* ===== BOOT OVERLAY ===== */}
         {v.booting && <BootOverlay bootShown={v.bootShown} bootAnim={v.bootAnim} skipBoot={v.skipBoot} />}
