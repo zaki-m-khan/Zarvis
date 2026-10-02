@@ -121,7 +121,9 @@ export default function Architecture() {
     <div style={{
       position: 'absolute', top: 86, left: 16, right: 16, bottom: 16, zIndex: 45,
       display: 'flex', flexDirection: 'column',
-      background: 'linear-gradient(180deg, rgba(13,26,38,.93), rgba(6,13,21,.97))',
+      // fully opaque base (solid gradient) + faint grid on top, so the HUD behind never bleeds through
+      background: 'linear-gradient(rgba(53,224,255,.03) 1px, transparent 1px), linear-gradient(90deg, rgba(53,224,255,.03) 1px, transparent 1px), linear-gradient(180deg, #0b1a29 0%, #060f1a 100%)',
+      backgroundSize: '44px 44px, 44px 44px, 100% 100%',
       border: '1px solid rgba(53,224,255,.22)', borderRadius: 8, padding: '16px 24px 18px',
       animation: 'panelin .4s ease both'
     }}>
